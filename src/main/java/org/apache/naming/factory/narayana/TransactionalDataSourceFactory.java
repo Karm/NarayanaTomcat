@@ -37,7 +37,7 @@ import java.sql.SQLException;
 import java.util.Hashtable;
 
 /**
- * @author <a href="mailto:zfeng@redhat.com>Zheng Feng</a>
+ * @author Zheng Feng
  */
 public class TransactionalDataSourceFactory implements ObjectFactory {
     @Override
