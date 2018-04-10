@@ -40,6 +40,20 @@ import java.util.Hashtable;
  * @author Zheng Feng
  */
 public class TransactionalDataSourceFactory implements ObjectFactory {
+    private static final String PROP_USERNAME = "username";
+    private static final String PROP_PASSWORD = "password";
+    private static final String PROP_MAX_TOTAL = "maxTotal";
+    private static final String PROP_MAX_IDLE = "maxIdle";
+    private static final String PROP_MIN_IDLE = "minIdle";
+
+    private static final String[] ALL_PROPERTIES = {
+            PROP_USERNAME,
+            PROP_PASSWORD,
+            PROP_MAX_TOTAL,
+            PROP_MAX_IDLE,
+            PROP_MIN_IDLE
+    };
+
     @Override
     public Object getObjectInstance(Object obj, Name name, Context context, Hashtable<?, ?> environment) throws Exception {
 
@@ -50,6 +64,14 @@ public class TransactionalDataSourceFactory implements ObjectFactory {
         final Reference ref = (Reference) obj;
         if (!"javax.sql.DataSource".equals(ref.getClassName())) {
             return null;
+        }
+
+        final Properties properties = new Properties();
+        for (final String propertyName : ALL_PROPERTIES) {
+            final RefAddr ra = ref.get(propertyName);
+            if (ra != null) {
+                properties.setProperty(propertyName, ra.getContent().toString());
+            }
         }
 
         TransactionManager transactionManager = (TransactionManager) getReferenceObject(ref, context, "transactionManager");
@@ -66,7 +88,14 @@ public class TransactionalDataSourceFactory implements ObjectFactory {
                 @Override
                 public XAResource[] getXAResources() throws Exception {
                     try {
-                        return new XAResource[] { xaDataSource.getXAConnection().getXAResource() };
+                        String user = properties.getProperty(PROP_USERNAME);
+                        String password = properties.getProperty(PROP_PASSWORD);
+
+                        if (user != null && password != null) {
+                            return new XAResource[]{xaDataSource.getXAConnection(user, password).getXAResource()};
+                        } else {
+                            return new XAResource[]{xaDataSource.getXAConnection().getXAResource()};
+                        }
                     } catch (SQLException ex) {
                         return new XAResource[0];
                     }
@@ -79,6 +108,7 @@ public class TransactionalDataSourceFactory implements ObjectFactory {
                     new DataSourceXAConnectionFactory(transactionManager, xaDataSource);
             PoolableConnectionFactory poolableConnectionFactory = new PoolableConnectionFactory(xaConnectionFactory, null);
             GenericObjectPoolConfig config = new GenericObjectPoolConfig();
+            setPoolConfig(config, properties);
             GenericObjectPool<PoolableConnection> objectPool =
                     new GenericObjectPool<>(poolableConnectionFactory, config);
             poolableConnectionFactory.setPool(objectPool);
@@ -95,6 +125,40 @@ public class TransactionalDataSourceFactory implements ObjectFactory {
         } else {
             return null;
         }
+    }
+
+    private void setPoolConfig(GenericObjectPoolConfig config, Properties properties) {
+        for (String propertyName : ALL_PROPERTIES) {
+            try {
+                Method method = getSetMethod(GenericObjectPoolConfig.class, propertyName);
+                Class type = GenericObjectPoolConfig.class.getDeclaredField(propertyName).getType();
+                String value = properties.getProperty(propertyName);
+                if (value != null) {
+                    if (type == int.class) {
+                        method.invoke(config, Integer.parseInt(value));
+                    } else if (type == long.class) {
+                        method.invoke(config, Long.parseLong(value));
+                    } else if (type == boolean.class) {
+                        method.invoke(config, Boolean.parseBoolean(value));
+                    } else if (type == String.class) {
+                        method.invoke(config, value);
+                    }
+                }
+            } catch (Exception e) {
+            }
+        }
+    }
+
+    private Method getSetMethod(Class objectClass, String fieldName) throws Exception {
+        Class[] parameterTypes = new Class[1];
+        Field field = objectClass.getDeclaredField(fieldName);
+        parameterTypes[0] = field.getType();
+        StringBuffer sb = new StringBuffer();
+        sb.append("set");
+        sb.append(fieldName.substring(0, 1).toUpperCase());
+        sb.append(fieldName.substring(1));
+        Method method = objectClass.getMethod(sb.toString(), parameterTypes);
+        return method;
     }
 
     private XARecoveryModule getXARecoveryModule() {
